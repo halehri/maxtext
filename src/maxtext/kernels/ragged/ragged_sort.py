@@ -293,9 +293,13 @@ def ring_ragged_sort(
       # gather-reduce: each input token has exactly `topk` contributions located
       # at sorted positions `topk_argsort_revert_indices[t*topk:(t+1)*topk]`.
       # `topk_weights` is set to ones because this op has no per-row weighting.
+      # Clamp the masked rows' indices to 0 as the packed branch below does: with index_math="count" they are -1
+      # (other shards' slots), and the SparseCore kernel DMA-reads x at the index of every lane of its last
+      # partial row block, masked lanes included, without bounds checks (row -1 is out of bounds). The masked
+      # lanes are discarded, so the values are unchanged.
       grad_hidden_states = ragged_gather_reduce(
           g_x,
-          topk_argsort_revert_indices,
+          jnp.where(valid_rows_mask, topk_argsort_revert_indices, 0),
           topk_weights=jnp.ones((n,), dtype=jnp.float32),
           valid_rows_mask=valid_rows_mask,
           reduce_group_size=topk,
@@ -409,9 +413,13 @@ def _ring_unsort_combine(
     valid_rows_mask = (topk_argsort_revert_indices >= shard_output_start) & (
         topk_argsort_revert_indices < shard_output_end
     )
+    # Clamp the masked rows' indices to 0 as the packed branch below does: with index_math="count" they are -1
+    # (other shards' slots), and the SparseCore kernel DMA-reads sorted_tokens_local at the index of every lane of
+    # its last partial row block, masked lanes included, without bounds checks (row -1 is out of bounds). The
+    # masked lanes are discarded, so the values are unchanged.
     return ragged_gather_reduce(
         sorted_tokens_local,
-        topk_argsort_revert_indices,
+        jnp.where(valid_rows_mask, topk_argsort_revert_indices, 0),
         topk_weights=topk_weights_flat,
         valid_rows_mask=valid_rows_mask,
         reduce_group_size=topk,

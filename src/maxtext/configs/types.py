@@ -1937,6 +1937,82 @@ class MoEGeneral(BaseModel):
       _off_for_false_fp8_fake_quant_hoist
   )
 
+  fp8_moe_native_fwd: bool = Field(
+      False,
+      description=(
+          "Native FP8 forward for the routed experts. With fp8_moe_fake_quant and fp8_fake_quant_hoist=gather8,"
+          " the wi and wo forward GMMs run on the MXU in float8_e4m3fn: the gathered weight codes and their"
+          " per-channel scales feed gmm_v2 directly (no dequantization), and gmm_v2 quantizes the bf16 activation"
+          " in the kernel (dynamic per-row, per-512-column-block absmax), as the FP8 rollout's kernel does. The"
+          " backward is unchanged (bf16 DLHS / TGMM at the dequantized weight, straight-through weight gradient)."
+          " Runs only inside the decoder's layer scan, where gather8's absmax is attached; a RoutedMoE call outside"
+          " it (unscanned layers, KV-cache decode) raises instead of silently running fake QAT."
+      ),
+  )
+  fp8_moe_native_fwd_acc_dtype: Literal["", "bfloat16", "float32"] = Field(
+      "",
+      description=(
+          "fp8_moe_native_fwd: gmm_v2's accumulator across K blocks. '' keeps the kernel default (bfloat16 when the"
+          " lhs is quantized in the kernel, as in the rollout's kernel); 'float32' accumulates in float32."
+      ),
+  )
+  fp8_moe_native_fwd_lhs_quant: Literal[
+      "",
+      "block512_bf16",
+      "block512_bf16_rhs1",
+      "block512_f32",
+      "block512_f32_hoist",
+      "fullk_bf16",
+      "fullk_bf16_hoist",
+      "fullk_f32",
+      "fullk_f32_hoist",
+  ] = Field(
+      "",
+      description=(
+          "fp8_moe_native_fwd: in-kernel lhs quantization scheme. '' / 'block512_bf16' keeps gmm_v2's default"
+          " (per-row x 512-column block, bf16 absmax/reciprocal); 'fullk_f32' uses per-row full-K f32 absmax/448"
+          " true division matching rollout moe_lowtok; '*_hoist' quantizes the lhs block once, outside the mxu n-loop."
+          " Mosaic already deduplicates the per-n-chunk quantization of the unrolled loop, so '*_hoist' measured"
+          " identical to its non-hoist mode (kernel microbench on tpu7x and tpu8i)."
+      ),
+  )
+  fp8_moe_native_bwd_dlhs: bool = Field(
+      False,
+      description=(
+          "fp8_moe_native_fwd: the backward DLHS GMMs (wi, and wo's fused-dSwiGLU DLHS, including the ring-of-experts"
+          " one) read the float8 weight codes and dequantize each weight block in VMEM inside gmm_v2, with the same"
+          " expression (codes.astype(float32) * scale).astype(bf16), instead of an XLA dequantization of every"
+          " expert weight before the kernel. Bit-identical results; the weight-gradient TGMMs are unchanged. Needs"
+          " moe_gmm_v2_dlhs_transpose_rhs and fixed tiles (use_gmm_v2_heuristic_tiling=False)."
+      ),
+  )
+
+  @model_validator(mode="after")
+  def validate_fp8_moe_native_fwd(self) -> "MoEGeneral":
+    """The FP8 forward replaces the gather8 dequantization on the fused gmm_v2 SwiGLU path only."""
+    if self.fp8_moe_native_fwd:
+      _reject_unless(
+          "fp8_moe_native_fwd=True",
+          [
+              (self.fp8_moe_fake_quant, "fp8_moe_fake_quant=True"),
+              (self.fp8_fake_quant_hoist == "gather8", "fp8_fake_quant_hoist=gather8"),
+              (self.sparse_matmul, "sparse_matmul=True"),
+              (self.use_tokamax_gmm and self.use_gmm_v2, "use_tokamax_gmm=True and use_gmm_v2=True"),
+              (self.moe_wi_gmm_fused_swiglu, "moe_wi_gmm_fused_swiglu=True"),
+              (self.moe_wo_gmm_fused_dswiglu, "moe_wo_gmm_fused_dswiglu=True"),
+          ],
+      )
+    if self.fp8_moe_native_bwd_dlhs:
+      _reject_unless(
+          "fp8_moe_native_bwd_dlhs=True",
+          [
+              (self.fp8_moe_native_fwd, "fp8_moe_native_fwd=True"),
+              (self.moe_gmm_v2_dlhs_transpose_rhs, "moe_gmm_v2_dlhs_transpose_rhs=True"),
+              (not getattr(self, "use_gmm_v2_heuristic_tiling", False), "use_gmm_v2_heuristic_tiling=False"),
+          ],
+      )
+    return self
+
   rollout_fp8_moe: bool = Field(
       False,
       description=(
