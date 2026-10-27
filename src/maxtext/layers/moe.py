@@ -4092,9 +4092,12 @@ class RoutedMoE(nnx.Module):
       inputs, padding_amount = max_utils.maybe_pad(x, fwd_tile("wi_tile_fwd_batch_seq"))
       # Weights are stored as (G,K,2N): w0/w1 are adjacent slices (the same concatenate as gmm_up), or w0 is already
       # the whole [w0 | w1] (moe_unsplit_prefused_wi).
-      w_fused = w0 if w1 is None else (
-          Fp8NativeWeight.concat_last(w0, w1) if isinstance(w0, Fp8NativeWeight) else jnp.concatenate([w0, w1], axis=-1)
-      )
+      if w1 is None:
+        w_fused = w0
+      elif isinstance(w0, Fp8NativeWeight):
+        w_fused = Fp8NativeWeight.concat_last(w0, w1)
+      else:
+        w_fused = jnp.concatenate([w0, w1], axis=-1)
       # wi_tile_fwd_rhs_buffer_count: the fused forward kernel's weight pipeline depth, applied only when that GMM
       # runs one K tile (its weight block then changes only at expert and n-tile boundaries); otherwise, e.g. with
       # the eval tiles, the kernel's default buffering.

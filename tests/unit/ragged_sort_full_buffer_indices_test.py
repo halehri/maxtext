@@ -133,12 +133,17 @@ def test_full_buffer_combine_in_bounds_and_unchanged(ep, index_math):
       # The call before the fix: the raw inverse. The masked lanes are discarded, so the output is the same bits.
       valid = (revert >= start) & (revert < end)
       before = ragged_gather_reduce_v2.ragged_gather_reduce(
-          x, revert, w, valid, reduce_group_size=topk, enforce_fallback=True
+          x=x,
+          indices=revert,
+          topk_weights=w,
+          valid_rows_mask=valid,
+          reduce_group_size=topk,
+          enforce_fallback=True,
       )
       assert _bits_equal(out, before), f"seed{seed} shard{shard}: output changed"
       # float64 reference: each token's routing-weighted sum over its slots in this shard's window.
       xr, rr, wr, vr = (np.asarray(a) for a in (x.astype(jnp.float32), revert, w, valid))
-      ref = np.where(vr[:, None], xr[np.where(vr, rr, 0)] * wr[:, None], 0.0).reshape(tokens, topk, _H).sum(1)
+      ref = np.where(vr[:, None], xr[np.where(vr, rr, 0)] * wr[:, None], 0.0).reshape((tokens, topk, _H)).sum(1)
       np.testing.assert_allclose(np.asarray(out, np.float32), ref, rtol=2e-2, atol=2e-2)
 
 

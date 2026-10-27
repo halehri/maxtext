@@ -2322,7 +2322,16 @@ def _gmm_dswiglu_fp8(
   """gmm_dswiglu_fp8 when not differentiated: the FP8 forward."""
   del gate_up, rhs, dlhs_transpose, pre_act_tile_n, rhs_dtype, native_bwd_dlhs
   return _gmm_fp8_fwd_kernel(
-      lhs_act, rhs_codes, rhs_scale, group_sizes, group_offset, preferred_element_type, tiling, heuristic, acc_dtype, lhs_quant_mode
+      lhs_act,
+      rhs_codes,
+      rhs_scale,
+      group_sizes,
+      group_offset,
+      preferred_element_type,
+      tiling,
+      heuristic,
+      acc_dtype,
+      lhs_quant_mode,
   )
 
 
@@ -2344,9 +2353,19 @@ def _gmm_dswiglu_fp8_fwd(
     lhs_quant_mode,
     native_bwd_dlhs,
 ):
+  """Differentiated: the FP8 forward; saves the FP8 weight and scale (not a bf16 copy) for the backward."""
   del rhs, dlhs_transpose, pre_act_tile_n, rhs_dtype, native_bwd_dlhs
   out = _gmm_fp8_fwd_kernel(
-      lhs_act, rhs_codes, rhs_scale, group_sizes, group_offset, preferred_element_type, tiling, heuristic, acc_dtype, lhs_quant_mode
+      lhs_act,
+      rhs_codes,
+      rhs_scale,
+      group_sizes,
+      group_offset,
+      preferred_element_type,
+      tiling,
+      heuristic,
+      acc_dtype,
+      lhs_quant_mode,
   )
   return out, (lhs_act, gate_up, rhs_codes, rhs_scale, group_sizes, group_offset)
 

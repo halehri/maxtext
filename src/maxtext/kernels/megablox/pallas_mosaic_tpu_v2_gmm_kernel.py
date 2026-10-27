@@ -2634,9 +2634,11 @@ def gmm_v2(
   if cfgs.rhs_contract_dequant:
     base_kernel_body = kernel_body
 
-    def kernel_body(*refs):
+    def kernel_body_with_rhs_cache(*refs):
       *refs, rhs_cache_ref, rhs_cache_key_ref = refs
       base_kernel_body(*refs, rhs_cache_refs=(rhs_cache_ref, rhs_cache_key_ref))
+
+    kernel_body = kernel_body_with_rhs_cache
 
   out = pl.pallas_call(
       kernel_body,
